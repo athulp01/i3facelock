@@ -64,12 +64,14 @@ xcb_window_t win;
 static xcb_cursor_t cursor;
 #ifndef __OpenBSD__
 static pam_handle_t *pam_handle;
+static pam_handle_t *pam_facehandle;
 static bool pam_cleanup;
 #endif
 int input_position = 0;
 /* Holds the password you enter (in UTF-8). */
 static char password[512];
 static bool beep = false;
+static bool face = true;
 bool debug_mode = false;
 bool unlock_indicator = true;
 char *modifier_string = NULL;
@@ -268,6 +270,31 @@ static void clear_input(void) {
 static void discard_passwd_cb(EV_P_ ev_timer *w, int revents) {
     clear_input();
     STOP_TIMER(discard_passwd_timeout);
+}
+
+static void start_face(void) {
+    auth_state = STATE_AUTH_VERIFY;
+    unlock_state = STATE_STARTED;
+    redraw_screen();
+    DEBUG("startinf successfully authenticated\n");
+    if (pam_authenticate(pam_facehandle, 0) == PAM_SUCCESS) {
+        DEBUG("successfully authenticated\n");
+        pam_cleanup = true;
+        ev_break(EV_DEFAULT, EVBREAK_ALL);
+        return;
+    }
+    auth_state = STATE_FACE_WRONG;
+    failed_attempts += 1;
+    clear_input();
+    redraw_screen();
+    /* Clear this state after 2 seconds (unless the user enters another
+     * password during that time). */
+    ev_now_update(main_loop);
+    START_TIMER(clear_auth_wrong_timeout, TSTAMP_N_SECS(2), clear_auth_wrong);
+
+    /* Cancel the clear_indicator_timeout, it would hide the unlock indicator
+     * too early. */
+    STOP_TIMER(clear_indicator_timeout);
 }
 
 static void input_done(void) {
@@ -1033,6 +1060,7 @@ int main(int argc, char *argv[]) {
         {"ignore-empty-password", no_argument, NULL, 'e'},
         {"inactivity-timeout", required_argument, NULL, 'I'},
         {"show-failed-attempts", no_argument, NULL, 'f'},
+        {"face-authenication", no_argument, NULL, 'F'},
         {NULL, no_argument, NULL, 0}};
 
     if ((pw = getpwuid(getuid())) == NULL)
@@ -1040,7 +1068,7 @@ int main(int argc, char *argv[]) {
     if ((username = pw->pw_name) == NULL)
         errx(EXIT_FAILURE, "pw->pw_name is NULL.");
 
-    char *optstring = "hvnbdc:p:ui:teI:f";
+    char *optstring = "hvnbdc:p:ui:teI:fF";
     while ((o = getopt_long(argc, argv, optstring, longopts, &longoptind)) != -1) {
         switch (o) {
             case 'v':
@@ -1100,6 +1128,9 @@ int main(int argc, char *argv[]) {
             case 'f':
                 show_failed_attempts = true;
                 break;
+            case 'F':
+                face = true;
+                break;
             default:
                 errx(EXIT_FAILURE, "Syntax: i3lock [-v] [-n] [-b] [-d] [-c color] [-u] [-p win|default]"
                                    " [-i image.png] [-t] [-e] [-I timeout] [-f]");
@@ -1112,6 +1143,12 @@ int main(int argc, char *argv[]) {
 
 #ifndef __OpenBSD__
     /* Initialize PAM */
+    if(face) {
+        if ((ret = pam_start("i3facelock", username, &conv, &pam_facehandle)) != PAM_SUCCESS)
+        errx(EXIT_FAILURE, "PAM: %s", pam_strerror(pam_facehandle, ret));
+        if ((ret = pam_set_item(pam_facehandle, PAM_TTY, getenv("DISPLAY"))) != PAM_SUCCESS)
+        errx(EXIT_FAILURE, "PAM: %s", pam_strerror(pam_facehandle, ret));
+    }
     if ((ret = pam_start("i3lock", username, &conv, &pam_handle)) != PAM_SUCCESS)
         errx(EXIT_FAILURE, "PAM: %s", pam_strerror(pam_handle, ret));
 
@@ -1250,7 +1287,6 @@ int main(int argc, char *argv[]) {
             errx(EXIT_FAILURE, "Cannot grab pointer/keyboard");
         }
     }
-
     pid_t pid = fork();
     /* The pid == -1 case is intentionally ignored here:
      * While the child process is useful for preventing other windows from
@@ -1277,7 +1313,6 @@ int main(int argc, char *argv[]) {
     /* Explicitly call the screen redraw in case "locking…" message was displayed */
     auth_state = STATE_AUTH_IDLE;
     redraw_screen();
-
     struct ev_io *xcb_watcher = calloc(sizeof(struct ev_io), 1);
     struct ev_check *xcb_check = calloc(sizeof(struct ev_check), 1);
     struct ev_prepare *xcb_prepare = calloc(sizeof(struct ev_prepare), 1);
@@ -1290,16 +1325,16 @@ int main(int argc, char *argv[]) {
 
     ev_prepare_init(xcb_prepare, xcb_prepare_cb);
     ev_prepare_start(main_loop, xcb_prepare);
-
+    start_face();
     /* Invoke the event callback once to catch all the events which were
      * received up until now. ev will only pick up new events (when the X11
      * file descriptor becomes readable). */
     ev_invoke(main_loop, xcb_check, 0);
     ev_loop(main_loop, 0);
-
 #ifndef __OpenBSD__
     if (pam_cleanup) {
         pam_end(pam_handle, PAM_SUCCESS);
+        pam_end(pam_facehandle, PAM_SUCCESS);
     }
 #endif
 

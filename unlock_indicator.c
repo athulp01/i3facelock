@@ -22,7 +22,7 @@
 #include "randr.h"
 #include "dpi.h"
 
-#define BUTTON_RADIUS 90
+#define BUTTON_RADIUS 100
 #define BUTTON_SPACE (BUTTON_RADIUS + 5)
 #define BUTTON_CENTER (BUTTON_RADIUS + 5)
 #define BUTTON_DIAMETER (2 * BUTTON_SPACE)
@@ -152,6 +152,7 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
                 break;
             case STATE_AUTH_WRONG:
             case STATE_I3LOCK_LOCK_FAILED:
+            case STATE_FACE_WRONG:
                 cairo_set_source_rgba(ctx, 250.0 / 255, 0, 0, 0.75);
                 break;
             default:
@@ -171,6 +172,7 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
                 break;
             case STATE_AUTH_WRONG:
             case STATE_I3LOCK_LOCK_FAILED:
+            case STATE_FACE_WRONG:
                 cairo_set_source_rgb(ctx, 125.0 / 255, 51.0 / 255, 0);
                 break;
             case STATE_AUTH_IDLE:
@@ -204,7 +206,7 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
 
         cairo_set_source_rgb(ctx, 0, 0, 0);
         cairo_select_font_face(ctx, "sans-serif", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
-        cairo_set_font_size(ctx, 28.0);
+        cairo_set_font_size(ctx, 26.0);
         switch (auth_state) {
             case STATE_AUTH_VERIFY:
                 text = "Verifying…";
@@ -217,6 +219,9 @@ xcb_pixmap_t draw_image(uint32_t *resolution) {
                 break;
             case STATE_I3LOCK_LOCK_FAILED:
                 text = "Lock failed!";
+                break;
+            case STATE_FACE_WRONG:
+                text = "Unknown face";
                 break;
             default:
                 if (unlock_state == STATE_NOTHING_TO_DELETE) {
